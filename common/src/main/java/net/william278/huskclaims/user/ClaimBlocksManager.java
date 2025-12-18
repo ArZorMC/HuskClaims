@@ -51,6 +51,15 @@ public interface ClaimBlocksManager {
     @Blocking
     void editSavedUser(@NotNull UUID uuid, @NotNull Consumer<SavedUser> consumer);
 
+    /**
+     * Returns true if the UUID is version 2.
+     * UUID v2 is commonly used by non-player/synthetic entities created by other plugins.
+     * These should never participate in claim block accrual logic.
+     */
+    private static boolean isUuidV2(@NotNull UUID uuid) {
+        return uuid.version() == 2;
+    }
+
     private long getCachedClaimBlocks(@NotNull UUID uuid) {
         return getCachedSavedUser(uuid).map(SavedUser::getClaimBlocks)
                 .orElseThrow(() -> new IllegalArgumentException("Couldn't get cached claim blocks for: " + uuid));
@@ -65,7 +74,9 @@ public interface ClaimBlocksManager {
         return getCachedClaimBlocks(user.getUuid());
     }
 
-    default long getCachedSpentClaimBlocks(@NotNull OnlineUser user) {return getCachedSpentClaimBlocks(user.getUuid());}
+    default long getCachedSpentClaimBlocks(@NotNull OnlineUser user) {
+        return getCachedSpentClaimBlocks(user.getUuid());
+    }
 
     @Blocking
     default long getClaimBlocks(@NotNull UUID uuid) {
@@ -125,7 +136,7 @@ public interface ClaimBlocksManager {
 
     @Blocking
     default void editSpentClaimBlocks(@NotNull User user, @NotNull SavedUserProvider.ClaimBlockSource ignoredSource,
-                                 @NotNull Function<Long, Long> consumer, @Nullable Consumer<Long> callback) {
+                                      @NotNull Function<Long, Long> consumer, @Nullable Consumer<Long> callback) {
         getPlugin().editSavedUser(user.getUuid(), (savedUser) -> {
             savedUser.setSpentClaimBlocks(consumer.apply(savedUser.getSpentClaimBlocks()));
             if (callback != null) {
@@ -136,12 +147,17 @@ public interface ClaimBlocksManager {
 
     @Blocking
     default void editSpentClaimBlocks(@NotNull User user, @NotNull SavedUserProvider.ClaimBlockSource source,
-                                 @NotNull Function<Long, Long> consumer) {
+                                      @NotNull Function<Long, Long> consumer) {
         editSpentClaimBlocks(user, source, consumer, null);
     }
 
     @Blocking
     default void grantHourlyClaimBlocks(@NotNull OnlineUser user) {
+        // Never accrue claim blocks for UUID v2 entries (non-player / synthetic entities)
+        if (isUuidV2(user.getUuid())) {
+            return;
+        }
+
         // Validate that the user still has accessible saved data before proceeding
         // This prevents race conditions when users disconnect during scheduler execution
         if (getCachedSavedUser(user.getUuid()).isEmpty()) {
@@ -165,8 +181,8 @@ public interface ClaimBlocksManager {
         } catch (IllegalArgumentException e) {
             // Log warning if user data becomes unavailable during execution
             // This can happen if user disconnects after validation but before block editing
-            getPlugin().log(Level.WARNING, "Failed to grant hourly claim blocks to user " + 
-                user.getUuid() + " (user data unavailable): " + e.getMessage());
+            getPlugin().log(Level.WARNING, "Failed to grant hourly claim blocks to user " +
+                    user.getUuid() + " (user data unavailable): " + e.getMessage());
         }
     }
 
@@ -182,9 +198,15 @@ public interface ClaimBlocksManager {
                     // Process each user with individual error handling to prevent one failure from affecting others
                     int processedUsers = 0;
                     int skippedUsers = 0;
-                    
+
                     for (OnlineUser user : onlineUsers) {
                         try {
+                            // Skip UUID v2 entries (non-player / synthetic entities)
+                            if (isUuidV2(user.getUuid())) {
+                                skippedUsers++;
+                                continue;
+                            }
+
                             // Double-check user is still in the online users map (not just in the collection snapshot)
                             if (getPlugin().getOnlineUserMap().containsKey(user.getUuid())) {
                                 grantHourlyClaimBlocks(user);
@@ -194,15 +216,15 @@ public interface ClaimBlocksManager {
                             }
                         } catch (Exception e) {
                             getPlugin().log(Level.SEVERE, "Unexpected error granting hourly claim blocks to user " +
-                                user.getUuid() + ": " + e.getMessage(), e);
+                                    user.getUuid() + ": " + e.getMessage(), e);
                             skippedUsers++;
                         }
                     }
 
                     if (skippedUsers > 0) {
                         getPlugin().log(Level.INFO, String.format(
-                            "Hourly claim blocks cycle completed: %d users processed, %d users skipped", 
-                            processedUsers, skippedUsers));
+                                "Hourly claim blocks cycle completed: %d users processed, %d users skipped",
+                                processedUsers, skippedUsers));
                     }
                 },
                 Duration.ofMinutes(60 / HOURLY_BLOCKS_UPDATES),
