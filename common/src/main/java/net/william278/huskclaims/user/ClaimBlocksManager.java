@@ -53,8 +53,7 @@ public interface ClaimBlocksManager {
 
     /**
      * Returns true if the UUID is version 2.
-     * UUID v2 is commonly used by non-player/synthetic entities created by other plugins.
-     * These should never participate in claim block accrual logic.
+     * UUID v2 identities (commonly used for NPCs) are excluded from claim block accrual.
      */
     private static boolean isUuidV2(@NotNull UUID uuid) {
         return uuid.version() == 2;
