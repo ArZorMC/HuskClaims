@@ -37,6 +37,7 @@ import net.william278.huskclaims.trust.TrustLevel;
 import net.william278.huskclaims.trust.TrustTag;
 import net.william278.huskclaims.trust.Trustable;
 import net.william278.huskclaims.trust.UserGroup;
+import net.william278.huskclaims.user.CommandUser;
 import net.william278.huskclaims.user.OnlineUser;
 import net.william278.huskclaims.user.User;
 import org.jetbrains.annotations.ApiStatus;
@@ -274,6 +275,9 @@ public class Claim implements Highlightable {
      */
     public boolean isPrivilegeAllowed(@NotNull TrustLevel.Privilege privilege, @NotNull User user,
                                       @NotNull HuskClaims plugin) {
+        if (isAdminClaim() && user instanceof CommandUser commandUser && ClaimingMode.ADMIN_CLAIMS.canUse(commandUser)) {
+            return true;
+        }
         return user.getUuid().equals(owner) || getEffectiveTrustLevel(user, plugin)
                 .map(level -> level.getPrivileges().contains(privilege))
                 .orElse(false);

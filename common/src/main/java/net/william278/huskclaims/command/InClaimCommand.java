@@ -40,6 +40,9 @@ import java.util.StringJoiner;
 
 public abstract class InClaimCommand extends OnlineUserCommand {
 
+    // ✅ Added: Permission to bypass trust-rank restrictions when managing trustees
+    private static final String BYPASS_TRUST_RANK_PERMISSION = "huskclaims.bypass.trust_rank";
+
     private final TrustLevel.Privilege privilege;
 
     protected InClaimCommand(@NotNull List<String> aliases, @NotNull String usage,
@@ -93,7 +96,13 @@ public abstract class InClaimCommand extends OnlineUserCommand {
      */
     protected boolean checkUserHasAccess(@NotNull OnlineUser executor, @NotNull Trustable trustable,
                                          @NotNull Claim claim) {
+        // Claim owner can always manage trust
         if (claim.getOwner().map(o -> o.equals(executor.getUuid())).orElse(false)) {
+            return true;
+        }
+
+        // ✅ Super-admin bypass: ignore trust rank restrictions
+        if (executor.hasPermission(BYPASS_TRUST_RANK_PERMISSION)) {
             return true;
         }
 

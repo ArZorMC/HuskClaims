@@ -64,6 +64,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.messaging.PluginMessageListener;
@@ -88,8 +89,11 @@ public class BukkitHuskClaims extends JavaPlugin implements HuskClaims, BukkitTa
     private Toilet toilet;
     private final Gson gson = getGsonBuilder().create();
     private final Set<TrustTag> trustTags = ConcurrentHashMap.newKeySet();
+
+    // Drops tracking
     private final ConcurrentMap<UUID, List<DroppedItem>> markedDrops = Maps.newConcurrentMap();
     private final ConcurrentMap<UUID, Set<GroundStack>> trackedItems = Maps.newConcurrentMap();
+
     private final ConcurrentMap<String, List<User>> globalUserList = Maps.newConcurrentMap();
     private final ConcurrentMap<UUID, ClaimSelection> claimSelections = Maps.newConcurrentMap();
     private final ConcurrentMap<UUID, OnlineUser> onlineUserMap = Maps.newConcurrentMap();
@@ -269,7 +273,7 @@ public class BukkitHuskClaims extends JavaPlugin implements HuskClaims, BukkitTa
     @Override
     public void onPluginMessageReceived(@NotNull String channel, @NotNull Player player, byte[] message) {
         if (broker != null && broker instanceof PluginMessageBroker pluginMessenger
-            && getSettings().getCrossServer().getBrokerType() == Broker.Type.PLUGIN_MESSAGE) {
+                && getSettings().getCrossServer().getBrokerType() == Broker.Type.PLUGIN_MESSAGE) {
             pluginMessenger.onReceive(channel, this.getOnlineUser(player), message);
         }
     }
@@ -307,6 +311,55 @@ public class BukkitHuskClaims extends JavaPlugin implements HuskClaims, BukkitTa
     @NotNull
     public BukkitHuskClaims getPlugin() {
         return this;
+    }
+
+    // ✅ Added: Explicit DropsHandler storage accessors
+    @NotNull
+    @Override
+    public Map<UUID, List<DroppedItem>> getMarkedDrops() {
+        return markedDrops;
+    }
+
+    @NotNull
+    @Override
+    public Map<UUID, Set<GroundStack>> getTrackedItems() {
+        return trackedItems;
+    }
+
+    // ✅ Added: Two-fold unlock implementation (fast path + robust scan)
+    @Override
+    public long unlockDrops(@NotNull User toUnlock) {
+        if (!getSettings().getModeration().getDrops().isLockItems()) {
+            return 0L;
+        }
+
+        long unlocked = 0L;
+
+        // Fast path: unlock tracked references (best-effort)
+        final Set<GroundStack> tracked = trackedItems.getOrDefault(toUnlock.getUuid(), Collections.emptySet());
+        for (GroundStack stack : tracked) {
+            try {
+                stack.unlock();
+                unlocked++;
+            } catch (Throwable ignored) {
+                // Stale entity references can happen; don't fail the command
+            }
+        }
+        trackedItems.remove(toUnlock.getUuid());
+
+        // Robust path: scan loaded entities and clear owner restriction
+        for (org.bukkit.World world : Bukkit.getWorlds()) {
+            for (Item item : world.getEntitiesByClass(Item.class)) {
+                final UUID owner = item.getOwner();
+                if (owner != null && owner.equals(toUnlock.getUuid())) {
+                    item.setOwner(null);
+                    item.setInvulnerable(false);
+                    unlocked++;
+                }
+            }
+        }
+
+        return unlocked;
     }
 
     public static class Adapter {

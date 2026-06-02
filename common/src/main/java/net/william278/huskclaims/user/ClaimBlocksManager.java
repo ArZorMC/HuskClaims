@@ -64,17 +64,8 @@ public interface ClaimBlocksManager {
                 .orElseThrow(() -> new IllegalArgumentException("Couldn't get cached claim blocks for: " + uuid));
     }
 
-    private long getCachedSpentClaimBlocks(@NotNull UUID uuid) {
-        return getCachedSavedUser(uuid).map(SavedUser::getSpentClaimBlocks)
-                .orElseThrow(() -> new IllegalArgumentException("Couldn't get cached spent claim blocks for: " + uuid));
-    }
-
     default long getCachedClaimBlocks(@NotNull OnlineUser user) {
         return getCachedClaimBlocks(user.getUuid());
-    }
-
-    default long getCachedSpentClaimBlocks(@NotNull OnlineUser user) {
-        return getCachedSpentClaimBlocks(user.getUuid());
     }
 
     @Blocking
@@ -159,10 +150,12 @@ public interface ClaimBlocksManager {
 
         // Validate that the user still has accessible saved data before proceeding
         // This prevents race conditions when users disconnect during scheduler execution
-        if (getCachedSavedUser(user.getUuid()).isEmpty()) {
-            // User not in cache - skip database lookup during scheduler execution to avoid blocking
-            // This prevents performance issues and indicates user likely disconnected
-            return;
+        final Optional<SavedUser> cached = getCachedSavedUser(user.getUuid());
+        if (cached.isEmpty()) {
+            // Attempt a single blocking load as a recovery path
+            if (getSavedUser(user.getUuid()).isEmpty()) {
+                return; // truly unavailable
+            }
         }
 
         final long hourlyBlocks = user.getNumericalPermission(HOURLY_BLOCKS_PERMISSION)
@@ -176,7 +169,14 @@ public interface ClaimBlocksManager {
             if (!getPlugin().getOnlineUserMap().containsKey(user.getUuid())) {
                 return;
             }
+
+            // DEBUG: confirm accrual is happening
+            getPlugin().log(Level.INFO,
+                    "[DEBUG] Granting hourly claim blocks to " + user.getName()
+                            + " (+" + hourlyBlocks + ")");
+
             editClaimBlocks(user, ClaimBlockSource.HOURLY_BLOCKS, (blocks -> blocks + hourlyBlocks));
+
         } catch (IllegalArgumentException e) {
             // Log warning if user data becomes unavailable during execution
             // This can happen if user disconnects after validation but before block editing
@@ -186,6 +186,11 @@ public interface ClaimBlocksManager {
     }
 
     default void loadClaimBlockScheduler() {
+
+        // Log once when the scheduler is initialized
+        getPlugin().log(Level.INFO,
+                "Hourly claim block scheduler initialized (" + HOURLY_BLOCKS_UPDATES + "x/hour)");
+
         getPlugin().getRepeatingTask(
                 () -> {
                     // Create a stable snapshot of online users to prevent concurrent modification issues
