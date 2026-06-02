@@ -32,8 +32,10 @@ import net.william278.huskclaims.user.User;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.ShulkerBullet;
 import org.bukkit.entity.Tameable;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
@@ -146,6 +148,17 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
         }
     }
 
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
+    public void onBlockedShulkerBulletDamage(@NotNull EntityDamageByEntityEvent e) {
+        if (!(e.getDamager() instanceof ShulkerBullet bullet) || !(bullet.getShooter() instanceof Enemy shooter)) {
+            return;
+        }
+
+        if (!(e.getEntity() instanceof Enemy) && isBlockedHostileProjectileDamage(shooter, e.getEntity())) {
+            e.setCancelled(true);
+        }
+    }
+
     private boolean isBlockedArmorStandAttack(@NotNull Player player, @NotNull ArmorStand armorStand) {
         return plugin.cancelOperation(Operation.of(
                 getUser(player),
@@ -158,6 +171,12 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
         final OperationPosition sourcePosition = getPosition(source.getLocation());
         final OperationPosition targetPosition = getPosition(target.getLocation());
         return plugin.cancelNature(targetPosition.getWorld(), sourcePosition, targetPosition);
+    }
+
+    private boolean isBlockedHostileProjectileDamage(@NotNull Entity source, @NotNull Entity target) {
+        final OperationPosition targetPosition = getPosition(target.getLocation());
+        return plugin.cancelOperation(Operation.of(OperationType.MONSTER_DAMAGE_TERRAIN, targetPosition))
+                || plugin.cancelNature(targetPosition.getWorld(), getPosition(source.getLocation()), targetPosition);
     }
 
     @Override

@@ -31,8 +31,11 @@ import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.decoration.AbstractDecorationEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
+import net.minecraft.entity.mob.ShulkerEntity;
 import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.projectile.ProjectileEntity;
+import net.minecraft.entity.projectile.ShulkerBulletEntity;
 import net.minecraft.entity.vehicle.VehicleEntity;
 import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
@@ -44,6 +47,7 @@ import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.explosion.Explosion;
 import net.william278.cloplib.listener.FabricOperationListener;
@@ -171,7 +175,7 @@ public class FabricListener extends FabricOperationListener implements FabricPet
 
         final Optional<ServerPlayerEntity> player = getPlayerSource(explosion.getCausingEntity());
         if (player.isPresent() && !player.get().isSpectator()) {
-            return handleExplosionPlayerDamage(player.get(), entity);
+            return handlePlayerDamageEntity(player.get(), entity);
         }
 
         if (!isMonster(entity) && getHandler().cancelOperation(Operation.of(
@@ -180,6 +184,32 @@ public class FabricListener extends FabricOperationListener implements FabricPet
         ))) {
             return ActionResult.FAIL;
         }
+        return ActionResult.PASS;
+    }
+
+    @Override
+    @NotNull
+    public ActionResult onProjectileHitEntity(@NotNull Entity hit, @NotNull ProjectileEntity projectile,
+                                              @Nullable Entity shooter, @Nullable BlockPos dispensedFrom) {
+        final Optional<ServerPlayerEntity> playerShooter = getPlayerSource(shooter);
+        if (playerShooter.isPresent()) {
+            return handlePlayerDamageEntity(playerShooter.get(), hit);
+        }
+
+        if (dispensedFrom != null) {
+            final OperationPosition dispenserPos = getPosition(dispensedFrom, hit.getWorld());
+            return getHandler().cancelNature(
+                    dispenserPos.getWorld(),
+                    getPosition(hit.getPos(), hit.getWorld(), hit.getYaw(), hit.getPitch()),
+                    dispenserPos
+            ) ? ActionResult.FAIL : ActionResult.PASS;
+        }
+
+        if (projectile instanceof ShulkerBulletEntity && shooter instanceof ShulkerEntity && !isMonster(hit)
+                && isBlockedHostileProjectileDamage(shooter, hit)) {
+            return ActionResult.FAIL;
+        }
+
         return ActionResult.PASS;
     }
 
@@ -199,7 +229,7 @@ public class FabricListener extends FabricOperationListener implements FabricPet
     }
 
     @NotNull
-    private ActionResult handleExplosionPlayerDamage(@NotNull ServerPlayerEntity attacker, @NotNull Entity damaged) {
+    private ActionResult handlePlayerDamageEntity(@NotNull ServerPlayerEntity attacker, @NotNull Entity damaged) {
         final OperationPosition damagedPos = getPosition(
                 damaged.getPos(), damaged.getWorld(),
                 damaged.getYaw(), damaged.getPitch()
@@ -224,6 +254,18 @@ public class FabricListener extends FabricOperationListener implements FabricPet
         final OperationPosition sourcePosition = getPosition(source.getPos(), source.getWorld(), source.getYaw(), source.getPitch());
         final OperationPosition targetPosition = getPosition(target.getPos(), target.getWorld(), target.getYaw(), target.getPitch());
         return plugin.cancelNature(targetPosition.getWorld(), sourcePosition, targetPosition);
+    }
+
+    private boolean isBlockedHostileProjectileDamage(@NotNull Entity source, @NotNull Entity target) {
+        final OperationPosition targetPosition = getPosition(target.getPos(), target.getWorld(), target.getYaw(), target.getPitch());
+        return getHandler().cancelOperation(Operation.of(
+                OperationType.MONSTER_DAMAGE_TERRAIN,
+                targetPosition
+        )) || getHandler().cancelNature(
+                targetPosition.getWorld(),
+                getPosition(source.getPos(), source.getWorld(), source.getYaw(), source.getPitch()),
+                targetPosition
+        );
     }
 
     @NotNull
