@@ -21,7 +21,9 @@ package net.william278.huskclaims.listener;
 
 import lombok.Getter;
 import net.william278.cloplib.listener.BukkitOperationListener;
+import net.william278.cloplib.operation.Operation;
 import net.william278.cloplib.operation.OperationPosition;
+import net.william278.cloplib.operation.OperationType;
 import net.william278.cloplib.operation.OperationUser;
 import net.william278.huskclaims.BukkitHuskClaims;
 import net.william278.huskclaims.moderation.SignListener;
@@ -29,12 +31,14 @@ import net.william278.huskclaims.position.World;
 import net.william278.huskclaims.user.User;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Tameable;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.entity.EntityKnockbackByEntityEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.inventory.ItemStack;
@@ -112,6 +116,28 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
                     hook -> hook.markClaims(loaded.getClaims(), loaded))
             );
         });
+    }
+
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
+    public void onBlockedArmorStandKnockback(@NotNull EntityKnockbackByEntityEvent e) {
+        if (!(e.getEntity() instanceof ArmorStand armorStand)) {
+            return;
+        }
+
+        final Optional<Player> source = getPlayerSource(e.getSourceEntity());
+        if (source.isEmpty() || !isBlockedArmorStandAttack(source.get(), armorStand)) {
+            return;
+        }
+
+        e.setCancelled(true);
+    }
+
+    private boolean isBlockedArmorStandAttack(@NotNull Player player, @NotNull ArmorStand armorStand) {
+        return plugin.cancelOperation(Operation.of(
+                getUser(player),
+                OperationType.PLAYER_DAMAGE_PERSISTENT_ENTITY,
+                getPosition(armorStand.getLocation())
+        ));
     }
 
     @Override
