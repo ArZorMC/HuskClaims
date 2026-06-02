@@ -34,6 +34,7 @@ import org.bukkit.Material;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.ShulkerBullet;
 import org.bukkit.entity.Tameable;
@@ -42,6 +43,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityExplodeEvent;
 import org.bukkit.event.entity.EntityKnockbackByEntityEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.event.world.WorldLoadEvent;
@@ -120,6 +122,18 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
                     hook -> hook.markClaims(loaded.getClaims(), loaded))
             );
         });
+    }
+
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
+    public void onEndCrystalExplode(@NotNull EntityExplodeEvent e) {
+        if (e.getEntityType() != EntityType.END_CRYSTAL) {
+            return;
+        }
+
+        e.blockList().removeIf(block -> plugin.cancelOperation(Operation.of(
+                OperationType.EXPLOSION_DAMAGE_TERRAIN,
+                getPosition(block.getLocation())
+        )));
     }
 
     @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
