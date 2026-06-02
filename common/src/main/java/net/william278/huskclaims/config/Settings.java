@@ -281,6 +281,11 @@ public final class Settings {
             @Comment("The number of days a user must not log on for to be marked as inactive (Minimum: 1)")
             private long inactiveDays = 60;
 
+            @Comment({"Minimum total accrued claim blocks required to exempt a user from inactive claim pruning.",
+                    "Total accrued claim blocks are the user's current claim blocks plus spent claim blocks.",
+                    "Set to 0 to disable this exemption."})
+            private long minimumAccruedClaimBlocksToExempt = 10000;
+
             @Comment("List of worlds to exclude from being pruned.")
             private List<String> excludedWorlds = Lists.newArrayList();
 

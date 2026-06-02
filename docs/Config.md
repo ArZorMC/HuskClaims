@@ -178,6 +178,10 @@ claims:
     enabled: false
     # The number of days a user must not log on for to be marked as inactive (Minimum: 1)
     inactive_days: 60
+    # Minimum total accrued claim blocks required to exempt a user from inactive claim pruning.
+    # Total accrued claim blocks are the user's current claim blocks plus spent claim blocks.
+    # Set to 0 to disable this exemption.
+    minimum_accrued_claim_blocks_to_exempt: 10000
     # List of worlds to exclude from being pruned.
     excluded_worlds: []
     # List of users (by either UUID or username) to exclude from inactive claim pruning

@@ -62,6 +62,12 @@ public class SavedUser {
         return lastLogin.until(OffsetDateTime.now(), java.time.temporal.ChronoUnit.DAYS);
     }
 
+    public long getAccruedClaimBlocks() {
+        return claimBlocks > MAX_CLAIM_BLOCKS - spentClaimBlocks
+                ? MAX_CLAIM_BLOCKS
+                : claimBlocks + spentClaimBlocks;
+    }
+
     /**
      * Create a new {@link SavedUser}
      *

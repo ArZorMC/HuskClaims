@@ -137,7 +137,10 @@ public interface ClaimPruner {
     @NotNull
     default Set<User> getInactiveUsers() {
         final long days = Math.max(1, getSettings().getInactiveDays());
+        final long minimumAccruedClaimBlocks = Math.max(0, getSettings().getMinimumAccruedClaimBlocksToExempt());
         return getPlugin().getDatabase().getInactiveUsers(days).stream()
+                .filter(savedUser -> minimumAccruedClaimBlocks <= 0
+                        || savedUser.getAccruedClaimBlocks() < minimumAccruedClaimBlocks)
                 .map(SavedUser::getUser)
                 .filter(user -> !(getSettings().getExcludedUsers().contains(user.getUuid().toString())
                         || getSettings().getExcludedUsers().contains(user.getName())))
