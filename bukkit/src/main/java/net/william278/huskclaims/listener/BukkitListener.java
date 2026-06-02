@@ -38,6 +38,8 @@ import org.bukkit.entity.Tameable;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityKnockbackByEntityEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.event.world.WorldLoadEvent;
@@ -132,12 +134,30 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
         e.setCancelled(true);
     }
 
+    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
+    public void onBlockedCrossClaimExplosionDamage(@NotNull EntityDamageByEntityEvent e) {
+        if (e.getCause() != EntityDamageEvent.DamageCause.BLOCK_EXPLOSION
+                && e.getCause() != EntityDamageEvent.DamageCause.ENTITY_EXPLOSION) {
+            return;
+        }
+
+        if (isBlockedCrossClaimExplosion(e.getDamager(), e.getEntity())) {
+            e.setCancelled(true);
+        }
+    }
+
     private boolean isBlockedArmorStandAttack(@NotNull Player player, @NotNull ArmorStand armorStand) {
         return plugin.cancelOperation(Operation.of(
                 getUser(player),
                 OperationType.PLAYER_DAMAGE_PERSISTENT_ENTITY,
                 getPosition(armorStand.getLocation())
         ));
+    }
+
+    private boolean isBlockedCrossClaimExplosion(@NotNull Entity source, @NotNull Entity target) {
+        final OperationPosition sourcePosition = getPosition(source.getLocation());
+        final OperationPosition targetPosition = getPosition(target.getLocation());
+        return plugin.cancelNature(targetPosition.getWorld(), sourcePosition, targetPosition);
     }
 
     @Override

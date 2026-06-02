@@ -28,8 +28,13 @@ import net.fabricmc.fabric.api.networking.v1.PacketSender;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.decoration.AbstractDecorationEntity;
+import net.minecraft.entity.decoration.ArmorStandEntity;
 import net.minecraft.entity.passive.TameableEntity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.vehicle.VehicleEntity;
+import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.registry.Registries;
@@ -38,9 +43,13 @@ import net.minecraft.server.filter.FilteredMessage;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.ActionResult;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.explosion.Explosion;
 import net.william278.cloplib.listener.FabricOperationListener;
+import net.william278.cloplib.operation.Operation;
 import net.william278.cloplib.operation.OperationPosition;
+import net.william278.cloplib.operation.OperationType;
 import net.william278.cloplib.operation.OperationUser;
 import net.william278.huskclaims.FabricHuskClaims;
 import net.william278.huskclaims.moderation.SignListener;
@@ -141,6 +150,40 @@ public class FabricListener extends FabricOperationListener implements FabricPet
     }
 
     @Override
+    @NotNull
+    public ActionResult onExplosionDamageEntity(@NotNull Explosion explosion, @NotNull Entity entity) {
+        if (entity == explosion.getCausingEntity()) {
+            return ActionResult.PASS;
+        }
+
+        if (explosion.getCausingEntity() != null && isBlockedCrossClaimExplosion(explosion.getCausingEntity(), entity)) {
+            return ActionResult.FAIL;
+        }
+
+        final OperationPosition entityPos = getPosition(entity.getPos(), entity.getWorld(), entity.getYaw(), entity.getPitch());
+        if ((entity instanceof AbstractDecorationEntity || entity instanceof ArmorStandEntity) &&
+                getHandler().cancelOperation(Operation.of(
+                        OperationType.EXPLOSION_DAMAGE_TERRAIN,
+                        entityPos
+                ))) {
+            return ActionResult.FAIL;
+        }
+
+        final Optional<ServerPlayerEntity> player = getPlayerSource(explosion.getCausingEntity());
+        if (player.isPresent() && !player.get().isSpectator()) {
+            return handleExplosionPlayerDamage(player.get(), entity);
+        }
+
+        if (!isMonster(entity) && getHandler().cancelOperation(Operation.of(
+                OperationType.EXPLOSION_DAMAGE_ENTITY,
+                entityPos
+        ))) {
+            return ActionResult.FAIL;
+        }
+        return ActionResult.PASS;
+    }
+
+    @Override
     public boolean onUserTamedEntityAction(@Nullable Entity player, @NotNull Entity entity) {
         if (player == null || !plugin.getSettings().getPets().isEnabled() || !(entity instanceof TameableEntity tamed)) {
             return true;
@@ -153,6 +196,51 @@ public class FabricListener extends FabricOperationListener implements FabricPet
         }
 
         return !plugin.cancelPetOperation(plugin.getOnlineUser(source.get()), owner.get());
+    }
+
+    @NotNull
+    private ActionResult handleExplosionPlayerDamage(@NotNull ServerPlayerEntity attacker, @NotNull Entity damaged) {
+        final OperationPosition damagedPos = getPosition(
+                damaged.getPos(), damaged.getWorld(),
+                damaged.getYaw(), damaged.getPitch()
+        );
+        if (damaged instanceof ServerPlayerEntity playerVictim) {
+            return getHandler().cancelOperation(Operation.of(
+                    getUser(attacker),
+                    getUser(playerVictim),
+                    OperationType.PLAYER_DAMAGE_PLAYER,
+                    damagedPos
+            )) ? ActionResult.FAIL : ActionResult.PASS;
+        }
+
+        return getHandler().cancelOperation(Operation.of(
+                getUser(attacker),
+                getPlayerDamageType(damaged),
+                damagedPos
+        )) ? ActionResult.FAIL : ActionResult.PASS;
+    }
+
+    private boolean isBlockedCrossClaimExplosion(@NotNull Entity source, @NotNull Entity target) {
+        final OperationPosition sourcePosition = getPosition(source.getPos(), source.getWorld(), source.getYaw(), source.getPitch());
+        final OperationPosition targetPosition = getPosition(target.getPos(), target.getWorld(), target.getYaw(), target.getPitch());
+        return plugin.cancelNature(targetPosition.getWorld(), sourcePosition, targetPosition);
+    }
+
+    @NotNull
+    private OperationType getPlayerDamageType(@NotNull Entity entity) {
+        OperationType type = OperationType.PLAYER_DAMAGE_ENTITY;
+        if (isMonster(entity)) {
+            type = OperationType.PLAYER_DAMAGE_MONSTER;
+        } else if (entity instanceof VehicleEntity vehicle) {
+            type = vehicle instanceof VehicleInventory ? OperationType.BLOCK_BREAK : OperationType.BREAK_VEHICLE;
+        } else if (entity instanceof AbstractDecorationEntity) {
+            type = OperationType.BREAK_HANGING_ENTITY;
+        } else if (!(entity instanceof LivingEntity)) {
+            type = OperationType.BLOCK_BREAK;
+        } else if (entity.hasCustomName()) {
+            type = OperationType.PLAYER_DAMAGE_PERSISTENT_ENTITY;
+        }
+        return type;
     }
 
     @Override
