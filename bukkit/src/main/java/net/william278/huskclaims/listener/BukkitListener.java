@@ -32,32 +32,47 @@ import net.william278.huskclaims.user.User;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.ArmorStand;
-import org.bukkit.entity.Enemy;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Monster;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Shulker;
 import org.bukkit.entity.ShulkerBullet;
 import org.bukkit.entity.Tameable;
 import org.bukkit.event.Cancellable;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityExplodeEvent;
-import org.bukkit.event.entity.EntityKnockbackByEntityEvent;
 import org.bukkit.event.player.*;
 import org.bukkit.event.world.WorldLoadEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.EventExecutor;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.lang.reflect.Method;
 import java.util.Optional;
+import java.util.logging.Level;
 
 @Getter
 public class BukkitListener extends BukkitOperationListener implements BukkitPetListener, BukkitDropsListener,
         ClaimsListener, UserListener, SignListener {
 
+    private static final String ENEMY_CLASS_NAME = "org.bukkit.entity.Enemy";
+    private static final String KNOCKBACK_EVENT_CLASS_NAME = "org.bukkit.event.entity.EntityKnockbackByEntityEvent";
+    private static final String MODERN_END_CRYSTAL_TYPE_NAME = "END_CRYSTAL";
+    private static final String LEGACY_END_CRYSTAL_TYPE_NAME = "ENDER_CRYSTAL";
+    @Nullable
+    private static final EntityType END_CRYSTAL_TYPE = resolveOptionalEntityType(
+            MODERN_END_CRYSTAL_TYPE_NAME, LEGACY_END_CRYSTAL_TYPE_NAME
+    );
+
     protected final BukkitHuskClaims plugin;
+    @Nullable
+    private final Class<?> enemyClass = resolveOptionalClass(ENEMY_CLASS_NAME);
 
     public BukkitListener(@NotNull BukkitHuskClaims plugin) {
         super(plugin, plugin);
@@ -67,6 +82,7 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
     @Override
     public void register() {
         plugin.getServer().getPluginManager().registerEvents(this, plugin);
+        registerArmorStandKnockbackListener();
         setInspectorCallbacks();
     }
 
@@ -126,7 +142,7 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
 
     @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
     public void onEndCrystalExplode(@NotNull EntityExplodeEvent e) {
-        if (e.getEntityType() != EntityType.END_CRYSTAL) {
+        if (!isEndCrystalType(e.getEntityType())) {
             return;
         }
 
@@ -134,20 +150,6 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
                 OperationType.EXPLOSION_DAMAGE_TERRAIN,
                 getPosition(block.getLocation())
         )));
-    }
-
-    @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
-    public void onBlockedArmorStandKnockback(@NotNull EntityKnockbackByEntityEvent e) {
-        if (!(e.getEntity() instanceof ArmorStand armorStand)) {
-            return;
-        }
-
-        final Optional<Player> source = getPlayerSource(e.getSourceEntity());
-        if (source.isEmpty() || !isBlockedArmorStandAttack(source.get(), armorStand)) {
-            return;
-        }
-
-        e.setCancelled(true);
     }
 
     @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
@@ -164,12 +166,57 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
 
     @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGHEST)
     public void onBlockedShulkerBulletDamage(@NotNull EntityDamageByEntityEvent e) {
-        if (!(e.getDamager() instanceof ShulkerBullet bullet) || !(bullet.getShooter() instanceof Enemy shooter)) {
+        if (!(e.getDamager() instanceof ShulkerBullet bullet) || !(bullet.getShooter() instanceof Shulker shooter)) {
             return;
         }
 
-        if (!(e.getEntity() instanceof Enemy) && isBlockedHostileProjectileDamage(shooter, e.getEntity())) {
+        if (!isHostileMob(e.getEntity()) && isBlockedHostileProjectileDamage(shooter, e.getEntity())) {
             e.setCancelled(true);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void registerArmorStandKnockbackListener() {
+        final Class<?> optionalEventClass = resolveOptionalClass(KNOCKBACK_EVENT_CLASS_NAME);
+        if (optionalEventClass == null || !Event.class.isAssignableFrom(optionalEventClass)) {
+            return;
+        }
+
+        try {
+            final Class<? extends Event> eventClass = (Class<? extends Event>) optionalEventClass;
+            final Method getEntityMethod = eventClass.getMethod("getEntity");
+            final Method getSourceEntityMethod = eventClass.getMethod("getSourceEntity");
+            final EventExecutor executor = (listener, event) -> {
+                try {
+                    onBlockedArmorStandKnockback(event, getEntityMethod, getSourceEntityMethod);
+                } catch (ReflectiveOperationException e) {
+                    plugin.log(Level.WARNING, "Failed to process armor stand knockback protection event", e);
+                }
+            };
+            plugin.getServer().getPluginManager().registerEvent(
+                    eventClass, this, EventPriority.HIGHEST, executor, plugin, true
+            );
+        } catch (ReflectiveOperationException e) {
+            plugin.log(Level.WARNING, "Failed to register armor stand knockback protection listener", e);
+        }
+    }
+
+    private void onBlockedArmorStandKnockback(@NotNull Event event, @NotNull Method getEntityMethod,
+                                              @NotNull Method getSourceEntityMethod) throws ReflectiveOperationException {
+        final Object entity = getEntityMethod.invoke(event);
+        if (!(entity instanceof ArmorStand armorStand)) {
+            return;
+        }
+
+        final Object sourceEntity = getSourceEntityMethod.invoke(event);
+        if (!(sourceEntity instanceof Entity source)) {
+            return;
+        }
+
+        final Optional<Player> player = getPlayerSource(source);
+        if (player.isPresent() && isBlockedArmorStandAttack(player.get(), armorStand)
+                && event instanceof Cancellable cancellable) {
+            cancellable.setCancelled(true);
         }
     }
 
@@ -191,6 +238,43 @@ public class BukkitListener extends BukkitOperationListener implements BukkitPet
         final OperationPosition targetPosition = getPosition(target.getLocation());
         return plugin.cancelOperation(Operation.of(OperationType.MONSTER_DAMAGE_TERRAIN, targetPosition))
                 || plugin.cancelNature(targetPosition.getWorld(), getPosition(source.getLocation()), targetPosition);
+    }
+
+    private boolean isHostileMob(@NotNull Entity entity) {
+        if (enemyClass != null && enemyClass.isInstance(entity)) {
+            return true;
+        }
+        return entity instanceof Monster
+                || entity.getType() == EntityType.SHULKER
+                || entity.getType() == EntityType.SLIME
+                || entity.getType() == EntityType.MAGMA_CUBE
+                || entity.getType() == EntityType.PHANTOM
+                || entity.getType() == EntityType.GHAST;
+    }
+
+    static boolean isEndCrystalType(@NotNull EntityType entityType) {
+        return END_CRYSTAL_TYPE != null && entityType == END_CRYSTAL_TYPE;
+    }
+
+    @Nullable
+    static EntityType resolveOptionalEntityType(@NotNull String... names) {
+        for (String name : names) {
+            try {
+                return EntityType.valueOf(name);
+            } catch (IllegalArgumentException ignored) {
+                // Keep trying fallbacks until a matching enum constant is found
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Class<?> resolveOptionalClass(@NotNull String className) {
+        try {
+            return Class.forName(className);
+        } catch (ClassNotFoundException ignored) {
+            return null;
+        }
     }
 
     @Override
